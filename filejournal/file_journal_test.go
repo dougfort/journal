@@ -25,4 +25,20 @@ func TestFileJournal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("writer.Create( failed: %s", err)
 	}
+
+	var readResults []journal.ReadItem
+	for item := range NewReader(&buffer) {
+		if item.ItemType == journal.Error {
+			t.Fatalf("error reading results: %v", item.Item)
+		}
+		readResults = append(readResults, item)
+	}
+
+	if len(readResults) != 1 {
+		t.Fatalf("expected 1 result; found %d", len(readResults))
+	}
+
+	if readResults[0].ItemType != journal.Create {
+		t.Fatalf("unexpected item type %v", readResults[0].ItemType)
+	}
 }
