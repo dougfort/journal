@@ -35,12 +35,20 @@ func (w *FileWriter) Create(otype objecttype.ObjectType, object interface{}) err
 
 // Modify
 func (w *FileWriter) Modify(otype objecttype.ObjectType, object interface{}) error {
-	return errors.Errorf("not implemented")
+	data, err := json.Marshal(object)
+	if err != nil {
+		return errors.Wrap(err, "Marshal")
+	}
+	return w.appendObject(journal.Modify, otype.ID(), data)
 }
 
 // Delete
 func (w *FileWriter) Delete(otype objecttype.ObjectType, key string) error {
-	return errors.Errorf("not implemented")
+	data, err := json.Marshal(object)
+	if err != nil {
+		return errors.Wrap(err, "Marshal")
+	}
+	return w.appendObject(journal.Modify, otype.ID(), data)
 }
 
 // Version
