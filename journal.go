@@ -1,6 +1,8 @@
 package journal
 
 import (
+	"time"
+
 	"github.com/deciphernow/gm-control-api/api/objecttype"
 )
 
@@ -34,8 +36,9 @@ const (
 
 // ReadItem is an individual entry parsed from a Journal
 type ReadItem struct {
-	ItemType ReadItemType
-	Item     interface{}
+	ItemType  ReadItemType
+	Timestamp time.Time
+	Item      interface{}
 }
 
 // Reader is a channel that returns parsed items from a Journal

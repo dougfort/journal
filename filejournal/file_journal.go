@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"io"
+	"time"
 
 	"github.com/pkg/errors"
 
@@ -55,15 +56,26 @@ func (w *FileWriter) appendObject(
 	var err error
 
 	if err = binary.Write(w.Writer, binary.BigEndian, itemType); err != nil {
-		return errors.Wrap(err, "binary.Write")
+		return errors.Wrap(err, "binary.Write: itemType")
 	}
 	if err = binary.Write(w.Writer, binary.BigEndian, otype); err != nil {
-		return errors.Wrap(err, "binary.Write")
-	}
-	if err = binary.Write(w.Writer, binary.BigEndian, uint32(len(data))); err != nil {
-		return errors.Wrap(err, "binary.Write")
+		return errors.Wrap(err, "binary.Write: otype")
 	}
 
+	timestamp, err := time.Now().UTC().MarshalBinary()
+	if err != nil {
+		return errors.Wrap(err, "MarshalBinary()")
+	}
+	if err = binary.Write(w.Writer, binary.BigEndian, uint32(len(timestamp))); err != nil {
+		return errors.Wrap(err, "binary.Write: timestamp size")
+	}
+	if _, err = w.Writer.Write(timestamp); err != nil {
+		return errors.Wrap(err, "binary.Write: timestamp")
+	}
+
+	if err = binary.Write(w.Writer, binary.BigEndian, uint32(len(data))); err != nil {
+		return errors.Wrap(err, "binary.Write: data size")
+	}
 	_, err = w.Writer.Write(data)
 
 	return err
@@ -75,6 +87,9 @@ func NewReader(reader io.Reader) journal.Reader {
 		var err error
 		var itemType uint32
 		var otype int64
+		var timeBuffer []byte
+		var timestampSize uint32
+		var dataBuffer []byte
 		var dataSize uint32
 
 		defer close(itemChan)
@@ -97,15 +112,15 @@ func NewReader(reader io.Reader) journal.Reader {
 				}
 				break READ_LOOP
 			}
-			if err = binary.Read(reader, binary.BigEndian, &dataSize); err != nil {
+			if err = binary.Read(reader, binary.BigEndian, &timestampSize); err != nil {
 				itemChan <- journal.ReadItem{
 					ItemType: journal.Error,
 					Item:     err,
 				}
 				break READ_LOOP
 			}
-			buffer := make([]byte, dataSize)
-			if _, err = io.ReadFull(reader, buffer); err != nil {
+			timeBuffer = make([]byte, timestampSize)
+			if _, err = io.ReadFull(reader, timeBuffer); err != nil {
 				itemChan <- journal.ReadItem{
 					ItemType: journal.Error,
 					Item:     err,
@@ -113,7 +128,28 @@ func NewReader(reader io.Reader) journal.Reader {
 				break READ_LOOP
 			}
 
-			item := constructItem(journal.ReadItemType(itemType), otype, buffer)
+			if err = binary.Read(reader, binary.BigEndian, &dataSize); err != nil {
+				itemChan <- journal.ReadItem{
+					ItemType: journal.Error,
+					Item:     err,
+				}
+				break READ_LOOP
+			}
+			dataBuffer = make([]byte, dataSize)
+			if _, err = io.ReadFull(reader, dataBuffer); err != nil {
+				itemChan <- journal.ReadItem{
+					ItemType: journal.Error,
+					Item:     err,
+				}
+				break READ_LOOP
+			}
+
+			item := constructItem(
+				journal.ReadItemType(itemType),
+				otype,
+				timeBuffer,
+				dataBuffer,
+			)
 			itemChan <- item
 			if item.ItemType == journal.Error {
 				break READ_LOOP
@@ -124,18 +160,29 @@ func NewReader(reader io.Reader) journal.Reader {
 	return itemChan
 }
 
-func constructItem(itemType journal.ReadItemType, otype int64, data []byte) journal.ReadItem {
+func constructItem(
+	itemType journal.ReadItemType,
+	otype int64,
+	timeBuffer []byte,
+	dataBuffer []byte,
+) journal.ReadItem {
 	result := journal.ReadItem{ItemType: itemType}
 	var err error
 
+	if err = result.Timestamp.UnmarshalBinary(timeBuffer); err != nil {
+		result.ItemType = journal.Error
+		result.Item = errors.Wrap(err, "Timestamp.UnmarshalBinary")
+		return result
+	}
+
 	switch itemType {
 	case journal.Create, journal.Modify, journal.Delete:
-		if result.Item, err = constructObject(otype, data); err != nil {
+		if result.Item, err = constructObject(otype, dataBuffer); err != nil {
 			result.ItemType = journal.Error
 			result.Item = errors.Wrap(err, "constructObject")
 		}
 	case journal.Version:
-		result.Item = string(data)
+		result.Item = string(dataBuffer)
 	default:
 		result.ItemType = journal.Error
 		result.Item = errors.Errorf("unknown itemType: %v", itemType)
